@@ -96,9 +96,9 @@ class Config(BaseModel):
     db_name: str = Field(default="metadataservice", description="Database name")
     db_port: int = Field(default=6432, description="Database port")
 
-    subreddits: List[str] = Field(default=["samsung", "technology"], description="List of subreddits to monitor")
+    subreddits: List[str] = Field(default=["samsung", "technology", "apple"], description="List of subreddits to monitor")
     poll_interval: int = Field(default=60, description="Polling interval in seconds")
-    batch_size: int = Field(default=25, description="Number of posts to fetch per request")
+    batch_size: int = Field(default=100, description="Number of posts to fetch per request")
 
     log_level: str = Field(default="INFO", description="Logging level")
     user_agent: str = Field(default="RedditMultiMonitor/1.0", description="User agent for requests")
@@ -109,7 +109,7 @@ class Config(BaseModel):
         import os
 
         # Parse subreddits from environment variable (comma-separated)
-        subreddits_env = os.getenv('SUBREDDITS', 'samsung,technology')
+        subreddits_env = os.getenv('SUBREDDITS', 'samsung,technology,apple')
         subreddits = [sub.strip() for sub in subreddits_env.split(',') if sub.strip()]
 
         return cls(
