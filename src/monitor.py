@@ -74,11 +74,15 @@ class RedditMonitor:
                 logger.error("Failed to connect to Reddit API")
                 return False
 
-            # Get subreddit info
-            subreddit_info = self.reddit_client.get_subreddit_info(self.config.subreddit)
-            if subreddit_info:
-                logger.info(f"Monitoring r/{subreddit_info['display_name']} "
-                           f"({subreddit_info['subscribers']} subscribers)")
+            # Get subreddit info for all configured subreddits
+            logger.info(f"🔄 DEBUG: Monitoring {len(self.config.subreddits)} subreddits: {', '.join(self.config.subreddits)}")
+            for subreddit in self.config.subreddits:
+                subreddit_info = self.reddit_client.get_subreddit_info(subreddit)
+                if subreddit_info:
+                    logger.info(f"📂 DEBUG: r/{subreddit_info['display_name']} - "
+                               f"{subreddit_info['subscribers']} subscribers")
+                else:
+                    logger.warning(f"⚠️ DEBUG: Could not get info for r/{subreddit}")
 
             logger.info("Monitor initialized successfully")
             return True
@@ -94,53 +98,72 @@ class RedditMonitor:
         Returns:
             Number of new posts stored
         """
-        try:
-            # Get the timestamp of the most recent post in our database
-            last_post_time = self.database.get_latest_post_time()
-            logger.debug(f"Last post time in database: {last_post_time}")
+        from datetime import datetime
+        cycle_start = datetime.now()
+        logger.info(f"🔄 DEBUG: Starting fetch cycle at {cycle_start.strftime('%Y-%m-%d %H:%M:%S')}")
 
-            # Fetch new posts from Reddit
-            raw_posts = self.reddit_client.fetch_new_posts(
-                subreddit=self.config.subreddit,
-                limit=self.config.batch_size,
-                after=last_post_time
+        try:
+            # Get the timestamp of the most recent post for each subreddit
+            latest_timestamps = self.database.get_latest_post_times_by_subreddit(self.config.subreddits)
+
+            # Fetch new posts from all subreddits
+            logger.info(f"🔍 DEBUG: Calling Reddit API for new posts from {len(self.config.subreddits)} subreddits...")
+            raw_posts = self.reddit_client.fetch_posts_from_multiple_subreddits(
+                subreddits=self.config.subreddits,
+                limit_per_subreddit=self.config.batch_size,
+                after_timestamps=latest_timestamps
             )
 
             if not raw_posts:
-                logger.debug("No new posts fetched")
+                logger.info("⚠️ DEBUG: No new posts fetched from Reddit API")
+                print("⚠️ DEBUG: No new posts fetched from Reddit API")
                 self.stats.add_fetch_result(0, 0)
                 return 0
 
+            logger.info(f"🔍 DEBUG: Processing {len(raw_posts)} posts for database storage...")
+
             # Convert raw posts to RedditPost models and store them
             new_posts_count = 0
-            for post_data in raw_posts:
+            for i, post_data in enumerate(raw_posts, 1):
                 try:
+                    logger.debug(f"🔍 DEBUG: Processing post {i}/{len(raw_posts)}: {post_data['post_id']}")
                     reddit_post = RedditPost.from_reddit_data(post_data)
+
                     if self.database.insert_post(reddit_post.to_dict()):
                         new_posts_count += 1
-                        logger.info(f"Stored new post: {reddit_post.post_id} - {reddit_post.title[:100]}...")
+                        logger.info(f"✅ DEBUG: Successfully stored post {new_posts_count}: {reddit_post.post_id} - {reddit_post.title[:80]}...")
 
                         # Update the most recent post timestamp
                         if self.stats.last_post_time is None or reddit_post.created_utc > self.stats.last_post_time:
                             self.stats.last_post_time = reddit_post.created_utc
+                            logger.debug(f"🔍 DEBUG: Updated latest timestamp to {reddit_post.created_utc}")
 
                 except Exception as e:
-                    logger.error(f"Failed to process post: {e}")
+                    logger.error(f"❌ DEBUG: Failed to process post {post_data.get('post_id', 'unknown')}: {e}")
                     self.stats.add_error()
 
             # Update statistics
             self.stats.add_fetch_result(len(raw_posts), new_posts_count)
 
+            # Enhanced results logging
+            cycle_end = datetime.now()
+            cycle_duration = (cycle_end - cycle_start).total_seconds()
+
             if new_posts_count > 0:
                 total_posts = self.database.get_post_count()
-                logger.info(f"Stored {new_posts_count} new posts. Total posts in database: {total_posts}")
+                logger.info(f"🎉 DEBUG: Cycle complete! Stored {new_posts_count} new posts in {cycle_duration:.1f}s. "
+                           f"Total posts in database: {total_posts}")
             else:
-                logger.debug("No new posts to store")
+                logger.info(f"⚠️ DEBUG: Cycle complete! No new posts to store (all {len(raw_posts)} posts were duplicates). "
+                           f"Cycle took {cycle_duration:.1f}s")
 
+            logger.info(f"📊 DEBUG: Current stats - {self.stats}")
             return new_posts_count
 
         except Exception as e:
-            logger.error(f"Error during fetch and store operation: {e}")
+            logger.error(f"❌ DEBUG: Error during fetch and store operation: {e}")
+            import traceback
+            logger.debug(f"🔍 DEBUG: Full traceback: {traceback.format_exc()}")
             self.stats.add_error()
             return 0
 

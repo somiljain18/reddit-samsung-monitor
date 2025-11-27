@@ -93,8 +93,13 @@ def validate_config(config) -> bool:
     if config.batch_size < 1 or config.batch_size > 100:
         errors.append("Batch size must be between 1 and 100")
 
-    if not config.subreddit or not config.subreddit.replace('_', '').replace('-', '').isalnum():
-        errors.append("Invalid subreddit name")
+    # Subreddits validation
+    if not config.subreddits or len(config.subreddits) == 0:
+        errors.append("At least one subreddit must be configured")
+    else:
+        for subreddit in config.subreddits:
+            if not subreddit or not subreddit.replace('_', '').replace('-', '').isalnum():
+                errors.append(f"Invalid subreddit name: {subreddit}")
 
     # Log validation errors
     if errors:
@@ -114,9 +119,9 @@ def print_config_summary(config) -> None:
     """
     logging.info("Configuration Summary:")
     logging.info(f"  Database: {config.db_user}@{config.db_host}:{config.db_port}/{config.db_name}")
-    logging.info(f"  Subreddit: r/{config.subreddit}")
+    logging.info(f"  Subreddits: {', '.join([f'r/{sub}' for sub in config.subreddits])} ({len(config.subreddits)} total)")
     logging.info(f"  Poll Interval: {config.poll_interval} seconds")
-    logging.info(f"  Batch Size: {config.batch_size} posts")
+    logging.info(f"  Batch Size: {config.batch_size} posts per subreddit")
     logging.info(f"  Log Level: {config.log_level}")
 
 

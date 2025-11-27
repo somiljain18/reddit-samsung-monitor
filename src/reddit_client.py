@@ -23,7 +23,7 @@ class RedditClient:
         })
         self.rate_limit_delay = 2  # Minimum delay between requests in seconds
 
-    def fetch_new_posts(self, subreddit: str = "samsung", limit: int = 25, after: Optional[int] = None) -> List[Dict[str, Any]]:
+    def fetch_new_posts(self, subreddit: str = "technology", limit: int = 25, after: Optional[int] = None) -> List[Dict[str, Any]]:
         """
         Fetch new posts from a subreddit.
 
@@ -41,40 +41,107 @@ class RedditClient:
             'raw_json': 1  # Prevent HTML encoding
         }
 
+        print(f"Fetching new posts from r/{subreddit} with limit {limit} and after {after}")
         posts = []
 
+        # Enhanced debug logging
+        from datetime import datetime
+        after_readable = datetime.fromtimestamp(after).strftime('%Y-%m-%d %H:%M:%S UTC') if after else "None"
+        logger.info(f"🔍 DEBUG: Starting fetch from r/{subreddit}")
+        logger.info(f"🔍 DEBUG: Request params - limit: {limit}, after timestamp: {after} ({after_readable})")
+        logger.info(f"🔍 DEBUG: Request URL: {url}")
+
         try:
-            logger.debug(f"Fetching posts from r/{subreddit} with limit {limit}")
             response = self.session.get(url, params=params, timeout=30)
             response.raise_for_status()
+
+            logger.debug(f"🔍 DEBUG: HTTP Status: {response.status_code}")
+            logger.debug(f"🔍 DEBUG: Response headers: {dict(response.headers)}")
 
             data = response.json()
 
             if 'data' not in data or 'children' not in data['data']:
-                logger.warning(f"Unexpected response structure from Reddit API")
+                logger.warning(f"❌ DEBUG: Unexpected response structure from Reddit API")
+                logger.debug(f"🔍 DEBUG: Response structure: {list(data.keys()) if data else 'None'}")
                 return posts
 
-            for post in data['data']['children']:
+            total_posts_fetched = len(data['data']['children'])
+            logger.info(f"🔍 DEBUG: Reddit returned {total_posts_fetched} total posts")
+
+            filtered_count = 0
+            for i, post in enumerate(data['data']['children']):
                 if post['kind'] == 't3':  # 't3' indicates a link/post
                     post_data = self._extract_post_data(post['data'])
+                    post_time_readable = datetime.fromtimestamp(post_data['created_utc']).strftime('%Y-%m-%d %H:%M:%S UTC')
+
+                    logger.debug(f"🔍 DEBUG: Post {i+1}: ID={post_data['post_id']}, "
+                               f"created_utc={post_data['created_utc']} ({post_time_readable}), "
+                               f"title='{post_data['title'][:50]}...'")
 
                     # Filter posts newer than the 'after' timestamp if provided
                     if after is None or post_data['created_utc'] > after:
                         posts.append(post_data)
+                        logger.debug(f"✅ DEBUG: Post {post_data['post_id']} included (newer than filter)")
+                    else:
+                        filtered_count += 1
+                        logger.debug(f"❌ DEBUG: Post {post_data['post_id']} filtered out (older than {after})")
 
-            logger.info(f"Fetched {len(posts)} posts from r/{subreddit}")
+            logger.info(f"🔍 DEBUG: Total posts after filtering: {len(posts)}, filtered out: {filtered_count}")
+            logger.info(f"✅ Fetched {len(posts)} new posts from r/{subreddit} (out of {total_posts_fetched} total)")
 
             # Respect rate limits
             time.sleep(self.rate_limit_delay)
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to fetch posts from Reddit: {e}")
+            logger.error(f"❌ Network error fetching from Reddit: {e}")
         except ValueError as e:
-            logger.error(f"Failed to parse JSON response: {e}")
+            logger.error(f"❌ JSON parsing error: {e}")
         except Exception as e:
-            logger.error(f"Unexpected error while fetching posts: {e}")
+            logger.error(f"❌ Unexpected error while fetching posts: {e}")
+            import traceback
+            logger.debug(f"🔍 DEBUG: Full traceback: {traceback.format_exc()}")
 
         return posts
+
+    def fetch_posts_from_multiple_subreddits(self, subreddits: List[str], limit_per_subreddit: int = 25, after_timestamps: Optional[Dict[str, int]] = None) -> List[Dict[str, Any]]:
+        """
+        Fetch new posts from multiple subreddits.
+
+        Args:
+            subreddits: List of subreddit names to fetch from
+            limit_per_subreddit: Maximum number of posts to fetch per subreddit
+            after_timestamps: Dict mapping subreddit names to timestamp filters
+
+        Returns:
+            List of post dictionaries from all subreddits combined
+        """
+        all_posts = []
+        after_timestamps = after_timestamps or {}
+
+        logger.info(f"🔄 DEBUG: Starting multi-subreddit fetch from {len(subreddits)} subreddits: {', '.join(subreddits)}")
+
+        for subreddit in subreddits:
+            after_time = after_timestamps.get(subreddit, None)
+            logger.info(f"📂 DEBUG: Fetching from r/{subreddit} (after: {after_time})")
+
+            try:
+                posts = self.fetch_new_posts(
+                    subreddit=subreddit,
+                    limit=limit_per_subreddit,
+                    after=after_time
+                )
+
+                logger.info(f"✅ DEBUG: Got {len(posts)} posts from r/{subreddit}")
+                all_posts.extend(posts)
+
+            except Exception as e:
+                logger.error(f"❌ DEBUG: Failed to fetch from r/{subreddit}: {e}")
+
+        # Sort by created_utc timestamp (newest first)
+        all_posts.sort(key=lambda x: x.get('created_utc', 0), reverse=True)
+
+        logger.info(f"🎯 DEBUG: Total posts from all subreddits: {len(all_posts)}")
+        return all_posts
 
     def _extract_post_data(self, post: Dict[str, Any]) -> Dict[str, Any]:
         """

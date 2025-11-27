@@ -1,7 +1,7 @@
 """Data models for Reddit posts."""
 
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 
@@ -96,17 +96,21 @@ class Config(BaseModel):
     db_name: str = Field(default="metadataservice", description="Database name")
     db_port: int = Field(default=6432, description="Database port")
 
-    subreddit: str = Field(default="samsung", description="Subreddit to monitor")
+    subreddits: List[str] = Field(default=["samsung", "technology"], description="List of subreddits to monitor")
     poll_interval: int = Field(default=60, description="Polling interval in seconds")
     batch_size: int = Field(default=25, description="Number of posts to fetch per request")
 
     log_level: str = Field(default="INFO", description="Logging level")
-    user_agent: str = Field(default="RedditSamsungMonitor/1.0", description="User agent for requests")
+    user_agent: str = Field(default="RedditMultiMonitor/1.0", description="User agent for requests")
 
     @classmethod
     def from_env(cls) -> 'Config':
         """Create config from environment variables."""
         import os
+
+        # Parse subreddits from environment variable (comma-separated)
+        subreddits_env = os.getenv('SUBREDDITS', 'samsung,technology')
+        subreddits = [sub.strip() for sub in subreddits_env.split(',') if sub.strip()]
 
         return cls(
             db_host=os.getenv('DB_HOST', 'localhost'),
@@ -115,10 +119,10 @@ class Config(BaseModel):
             db_name=os.getenv('DB_NAME', 'metadataservice'),
             db_port=int(os.getenv('DB_PORT', '6432')),
 
-            subreddit=os.getenv('SUBREDDIT', 'samsung'),
+            subreddits=subreddits,
             poll_interval=int(os.getenv('POLL_INTERVAL', '60')),
             batch_size=int(os.getenv('BATCH_SIZE', '25')),
 
             log_level=os.getenv('LOG_LEVEL', 'INFO'),
-            user_agent=os.getenv('USER_AGENT', 'RedditSamsungMonitor/1.0')
+            user_agent=os.getenv('USER_AGENT', 'RedditMultiMonitor/1.0')
         )

@@ -3,7 +3,7 @@
 import logging
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import os
 
 
@@ -93,18 +93,25 @@ class Database:
         ON CONFLICT (post_id) DO NOTHING
         """
 
+        # Enhanced debug logging
+        from datetime import datetime
+        post_time_readable = datetime.fromtimestamp(post_data['created_utc']).strftime('%Y-%m-%d %H:%M:%S UTC')
+        logger.info(f"🔍 DEBUG: Attempting to insert post {post_data['post_id']}")
+        logger.debug(f"🔍 DEBUG: Post details - created_utc: {post_data['created_utc']} ({post_time_readable}), "
+                    f"title: '{post_data['title'][:100]}...', author: {post_data['author']}")
+
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute(insert_query, post_data)
                 self.connection.commit()
                 if cursor.rowcount > 0:
-                    logger.info(f"Inserted new post: {post_data['post_id']}")
+                    logger.info(f"✅ DEBUG: Successfully inserted new post: {post_data['post_id']}")
                     return True
                 else:
-                    logger.debug(f"Post already exists: {post_data['post_id']}")
+                    logger.info(f"⚠️ DEBUG: Post already exists in database: {post_data['post_id']}")
                     return False
         except psycopg2.Error as e:
-            logger.error(f"Failed to insert post {post_data.get('post_id', 'unknown')}: {e}")
+            logger.error(f"❌ Database error inserting post {post_data.get('post_id', 'unknown')}: {e}")
             self.connection.rollback()
             return False
 
@@ -116,10 +123,62 @@ class Database:
             with self.connection.cursor() as cursor:
                 cursor.execute(query)
                 result = cursor.fetchone()
-                return result['latest_time'] if result and result['latest_time'] else 0
+                latest_time = result['latest_time'] if result and result['latest_time'] else 0
+
+                # Enhanced debug logging
+                from datetime import datetime
+                if latest_time > 0:
+                    latest_readable = datetime.fromtimestamp(latest_time).strftime('%Y-%m-%d %H:%M:%S UTC')
+                    logger.info(f"🔍 DEBUG: Latest post in database: {latest_time} ({latest_readable})")
+                else:
+                    logger.info(f"🔍 DEBUG: No posts found in database, using timestamp 0")
+
+                return latest_time
         except psycopg2.Error as e:
-            logger.error(f"Failed to get latest post time: {e}")
+            logger.error(f"❌ Failed to get latest post time: {e}")
             return 0
+
+    def get_latest_post_times_by_subreddit(self, subreddits: List[str]) -> Dict[str, int]:
+        """Get the latest post timestamp for each subreddit."""
+        placeholders = ','.join(['%s'] * len(subreddits))
+        query = f"""
+        SELECT subreddit, MAX(created_utc) as latest_time
+        FROM samsung_posts
+        WHERE subreddit IN ({placeholders})
+        GROUP BY subreddit
+        """
+
+        result_dict = {}
+
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query, subreddits)
+                results = cursor.fetchall()
+
+                # Initialize all subreddits with 0
+                for subreddit in subreddits:
+                    result_dict[subreddit] = 0
+
+                # Update with actual values from database
+                for row in results:
+                    result_dict[row['subreddit']] = row['latest_time'] or 0
+
+                # Enhanced debug logging
+                from datetime import datetime
+                logger.info(f"🔍 DEBUG: Latest timestamps by subreddit:")
+                for subreddit, timestamp in result_dict.items():
+                    if timestamp > 0:
+                        readable = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S UTC')
+                        logger.info(f"  📂 r/{subreddit}: {timestamp} ({readable})")
+                    else:
+                        logger.info(f"  📂 r/{subreddit}: 0 (no posts)")
+
+                return result_dict
+
+        except psycopg2.Error as e:
+            logger.error(f"❌ Failed to get latest post times by subreddit: {e}")
+            # Return default values on error
+            return {subreddit: 0 for subreddit in subreddits}
 
     def get_post_count(self) -> int:
         """Get total number of posts in database."""
