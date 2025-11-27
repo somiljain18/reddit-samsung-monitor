@@ -163,15 +163,18 @@ class Database:
                 for row in results:
                     result_dict[row['subreddit']] = row['latest_time'] or 0
 
-                # Enhanced debug logging
+                # Enhanced debug logging with print statements
                 from datetime import datetime
                 logger.info(f"🔍 DEBUG: Latest timestamps by subreddit:")
+                print(f"🕒 DATABASE TIMESTAMPS per subreddit:")
                 for subreddit, timestamp in result_dict.items():
                     if timestamp > 0:
                         readable = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S UTC')
                         logger.info(f"  📂 r/{subreddit}: {timestamp} ({readable})")
+                        print(f"   r/{subreddit}: Last post at {readable}")
                     else:
                         logger.info(f"  📂 r/{subreddit}: 0 (no posts)")
+                        print(f"   r/{subreddit}: No posts yet (will fetch from beginning)")
 
                 return result_dict
 

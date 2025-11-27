@@ -149,15 +149,33 @@ class RedditMonitor:
             cycle_end = datetime.now()
             cycle_duration = (cycle_end - cycle_start).total_seconds()
 
+            # Enhanced results with print statements
+            total_posts = self.database.get_post_count()
+
             if new_posts_count > 0:
-                total_posts = self.database.get_post_count()
                 logger.info(f"🎉 DEBUG: Cycle complete! Stored {new_posts_count} new posts in {cycle_duration:.1f}s. "
                            f"Total posts in database: {total_posts}")
+                print(f"💾 DATABASE: Inserted {new_posts_count} new posts in {cycle_duration:.1f}s")
+                print(f"📊 DATABASE: Total posts stored: {total_posts}")
+
+                # Show breakdown by subreddit
+                subreddit_counts = {}
+                for post_data in raw_posts:
+                    subreddit = post_data.get('subreddit', 'unknown')
+                    subreddit_counts[subreddit] = subreddit_counts.get(subreddit, 0) + 1
+
+                print("📈 BREAKDOWN by subreddit:")
+                for subreddit, count in subreddit_counts.items():
+                    print(f"   r/{subreddit}: {count} posts processed")
+
             else:
                 logger.info(f"⚠️ DEBUG: Cycle complete! No new posts to store (all {len(raw_posts)} posts were duplicates). "
                            f"Cycle took {cycle_duration:.1f}s")
+                print(f"⚠️  DATABASE: No new posts inserted ({len(raw_posts)} were duplicates)")
+                print(f"📊 DATABASE: Total posts in database: {total_posts}")
 
             logger.info(f"📊 DEBUG: Current stats - {self.stats}")
+            print(f"⏱️  CYCLE: Completed in {cycle_duration:.1f} seconds")
             return new_posts_count
 
         except Exception as e:

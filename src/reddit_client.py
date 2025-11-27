@@ -35,9 +35,21 @@ class RedditClient:
         Returns:
             List of post dictionaries
         """
+        from datetime import datetime
+
+        # Special handling for initial fetch (after=0 or None)
+        is_initial_fetch = after is None or after == 0
+
+        if is_initial_fetch:
+            logger.info(f"🏁 DEBUG: Initial fetch for r/{subreddit} - getting oldest posts first")
+            # For initial fetch, get more posts and select the oldest ones
+            fetch_limit = min(100, limit * 4)  # Fetch more to get a good selection of older posts
+        else:
+            fetch_limit = min(limit, 100)
+
         url = f"{self.base_url}/r/{subreddit}/new.json"
         params = {
-            'limit': min(limit, 100),  # Reddit API max is 100
+            'limit': fetch_limit,  # Reddit API max is 100
             'raw_json': 1  # Prevent HTML encoding
         }
 
@@ -45,10 +57,9 @@ class RedditClient:
         posts = []
 
         # Enhanced debug logging
-        from datetime import datetime
         after_readable = datetime.fromtimestamp(after).strftime('%Y-%m-%d %H:%M:%S UTC') if after else "None"
         logger.info(f"🔍 DEBUG: Starting fetch from r/{subreddit}")
-        logger.info(f"🔍 DEBUG: Request params - limit: {limit}, after timestamp: {after} ({after_readable})")
+        logger.info(f"🔍 DEBUG: Request params - limit: {fetch_limit}, after timestamp: {after} ({after_readable})")
         logger.info(f"🔍 DEBUG: Request URL: {url}")
 
         try:
@@ -68,7 +79,8 @@ class RedditClient:
             total_posts_fetched = len(data['data']['children'])
             logger.info(f"🔍 DEBUG: Reddit returned {total_posts_fetched} total posts")
 
-            filtered_count = 0
+            # Extract all posts first
+            all_posts = []
             for i, post in enumerate(data['data']['children']):
                 if post['kind'] == 't3':  # 't3' indicates a link/post
                     post_data = self._extract_post_data(post['data'])
@@ -78,16 +90,32 @@ class RedditClient:
                                f"created_utc={post_data['created_utc']} ({post_time_readable}), "
                                f"title='{post_data['title'][:50]}...'")
 
-                    # Filter posts newer than the 'after' timestamp if provided
-                    if after is None or post_data['created_utc'] > after:
+                    all_posts.append(post_data)
+
+            # Handle initial fetch vs ongoing fetch differently
+            if is_initial_fetch:
+                # For initial fetch, sort by timestamp (oldest first) and take the oldest posts
+                all_posts.sort(key=lambda x: x.get('created_utc', 0))
+                posts = all_posts[:limit]  # Take the oldest N posts
+                logger.info(f"🏁 DEBUG: Initial fetch - selected {len(posts)} oldest posts from {len(all_posts)} available")
+                if posts:
+                    oldest_time = datetime.fromtimestamp(posts[0]['created_utc']).strftime('%Y-%m-%d %H:%M:%S UTC')
+                    newest_time = datetime.fromtimestamp(posts[-1]['created_utc']).strftime('%Y-%m-%d %H:%M:%S UTC')
+                    logger.info(f"🏁 DEBUG: Time range - oldest: {oldest_time}, newest: {newest_time}")
+            else:
+                # For ongoing fetch, filter posts newer than 'after' timestamp
+                filtered_count = 0
+                for post_data in all_posts:
+                    if post_data['created_utc'] > after:
                         posts.append(post_data)
                         logger.debug(f"✅ DEBUG: Post {post_data['post_id']} included (newer than filter)")
                     else:
                         filtered_count += 1
                         logger.debug(f"❌ DEBUG: Post {post_data['post_id']} filtered out (older than {after})")
 
-            logger.info(f"🔍 DEBUG: Total posts after filtering: {len(posts)}, filtered out: {filtered_count}")
-            logger.info(f"✅ Fetched {len(posts)} new posts from r/{subreddit} (out of {total_posts_fetched} total)")
+                logger.info(f"🔍 DEBUG: Ongoing fetch - {len(posts)} new posts, {filtered_count} filtered out")
+
+            logger.info(f"✅ Fetched {len(posts)} posts from r/{subreddit} (out of {total_posts_fetched} total)")
 
             # Respect rate limits
             time.sleep(self.rate_limit_delay)
@@ -118,11 +146,18 @@ class RedditClient:
         all_posts = []
         after_timestamps = after_timestamps or {}
 
+        from datetime import datetime
+        overall_start = datetime.now()
+
         logger.info(f"🔄 DEBUG: Starting multi-subreddit fetch from {len(subreddits)} subreddits: {', '.join(subreddits)}")
+        print(f"🔄 Starting fetch from {len(subreddits)} subreddits at {overall_start.strftime('%H:%M:%S')}")
 
         for subreddit in subreddits:
             after_time = after_timestamps.get(subreddit, None)
+            after_readable = datetime.fromtimestamp(after_time).strftime('%Y-%m-%d %H:%M:%S UTC') if after_time else "beginning of time"
+
             logger.info(f"📂 DEBUG: Fetching from r/{subreddit} (after: {after_time})")
+            print(f"📂 r/{subreddit}: Searching posts newer than {after_readable}")
 
             try:
                 posts = self.fetch_new_posts(
@@ -131,16 +166,41 @@ class RedditClient:
                     after=after_time
                 )
 
-                logger.info(f"✅ DEBUG: Got {len(posts)} posts from r/{subreddit}")
+                if posts:
+                    # Get time range of fetched posts
+                    post_times = [p['created_utc'] for p in posts]
+                    earliest_post = datetime.fromtimestamp(min(post_times)).strftime('%Y-%m-%d %H:%M:%S UTC')
+                    latest_post = datetime.fromtimestamp(max(post_times)).strftime('%Y-%m-%d %H:%M:%S UTC')
+
+                    logger.info(f"✅ DEBUG: Got {len(posts)} posts from r/{subreddit}")
+                    print(f"✅ r/{subreddit}: Fetched {len(posts)} posts from {earliest_post} to {latest_post}")
+                else:
+                    print(f"⚠️  r/{subreddit}: No new posts found")
+
                 all_posts.extend(posts)
 
             except Exception as e:
                 logger.error(f"❌ DEBUG: Failed to fetch from r/{subreddit}: {e}")
+                print(f"❌ r/{subreddit}: Error - {e}")
 
         # Sort by created_utc timestamp (newest first)
         all_posts.sort(key=lambda x: x.get('created_utc', 0), reverse=True)
 
-        logger.info(f"🎯 DEBUG: Total posts from all subreddits: {len(all_posts)}")
+        # Print overall summary
+        overall_end = datetime.now()
+        duration = (overall_end - overall_start).total_seconds()
+
+        if all_posts:
+            all_times = [p['created_utc'] for p in all_posts]
+            earliest_overall = datetime.fromtimestamp(min(all_times)).strftime('%Y-%m-%d %H:%M:%S UTC')
+            latest_overall = datetime.fromtimestamp(max(all_times)).strftime('%Y-%m-%d %H:%M:%S UTC')
+
+            logger.info(f"🎯 DEBUG: Total posts from all subreddits: {len(all_posts)}")
+            print(f"🎯 TOTAL: {len(all_posts)} posts fetched in {duration:.1f}s")
+            print(f"📅 Time range: {earliest_overall} → {latest_overall}")
+        else:
+            print(f"⚠️  TOTAL: No new posts found in {duration:.1f}s")
+
         return all_posts
 
     def _extract_post_data(self, post: Dict[str, Any]) -> Dict[str, Any]:
