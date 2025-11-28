@@ -158,3 +158,116 @@ FROM samsung_posts
 ORDER BY created_utc DESC
 LIMIT 10;
 ```
+
+## Twitter Hashtag Monitoring
+
+**NEW**: This repository now includes a separate Twitter hashtag monitoring system that runs alongside the Reddit monitor.
+
+### Features
+- **Real-time hashtag tracking** - Monitor specific hashtags on Twitter
+- **Twitter API v2 integration** - Uses Bearer token authentication
+- **Independent database schema** - Separate `twitter_tweets` table
+- **Rate limit compliance** - Respects Twitter API limits (300 requests/15min)
+- **Comprehensive tweet data** - Stores metrics, author info, and engagement data
+- **Separate configuration** - Independent `.env.twitter` file
+
+### Quick Start - Twitter Monitor
+
+#### 1. Setup Twitter API Access
+```bash
+# Create environment template
+python3 -m src.twitter_main --create-env
+
+# Check API requirements and setup instructions
+python3 -m src.twitter_main --check-api
+
+# View rate limit information
+python3 -m src.twitter_main --rate-limits
+```
+
+#### 2. Configure Twitter Environment
+```bash
+# Edit .env.twitter file and add your Twitter Bearer Token
+# Get your token from: https://developer.twitter.com/en/portal/dashboard
+nano .env.twitter
+```
+
+#### 3. Running Twitter Monitor
+```bash
+# Test mode (single cycle)
+python3 -m src.twitter_main --test
+
+# Continuous monitoring
+python3 -m src.twitter_main
+
+# Use custom environment file
+python3 -m src.twitter_main --env .env.custom
+```
+
+### Twitter Configuration
+
+Set the following variables in your `.env.twitter` file:
+
+#### Required
+- `TWITTER_BEARER_TOKEN`: Your Twitter API Bearer Token
+
+#### Optional
+- `TWITTER_HASHTAGS`: Comma-separated hashtags (default: samsung,technology,mobile)
+- `TWITTER_POLL_INTERVAL`: Polling interval in seconds (min: 120, default: 120)
+- `TWITTER_MAX_RESULTS`: Max tweets per request (10-100, default: 100)
+- `TWITTER_USER_AGENT`: Custom user agent (default: TwitterHashtagMonitor/1.0)
+
+### Twitter Database Schema
+
+The Twitter monitor creates a `twitter_tweets` table:
+- tweet_id (primary key)
+- text
+- author_id, author_username, author_name, author_verified
+- created_at, created_utc
+- lang (language code)
+- retweet_count, like_count, reply_count, quote_count
+- conversation_id, in_reply_to_user_id
+- hashtags (comma-separated)
+- referenced_tweets
+- retrieved_at
+
+### Twitter API Requirements
+
+- **Twitter Developer Account** (free)
+- **Bearer Token** from Twitter Developer Portal
+- **Rate Limits**: 300 requests per 15 minutes (Basic plan)
+- **Search Limit**: ~10,000 tweets per month
+- **Minimum Poll Interval**: 120 seconds (2 minutes)
+
+### Example Twitter Queries
+```sql
+-- Recent tweets by hashtag
+SELECT text, author_username, to_timestamp(created_utc), hashtags
+FROM twitter_tweets
+WHERE hashtags LIKE '%samsung%'
+ORDER BY created_utc DESC
+LIMIT 10;
+
+-- Tweet statistics by hashtag
+SELECT
+    UNNEST(string_to_array(hashtags, ',')) as hashtag,
+    COUNT(*) as tweet_count,
+    AVG(like_count) as avg_likes
+FROM twitter_tweets
+GROUP BY hashtag
+ORDER BY tweet_count DESC;
+```
+
+### Running Both Monitors
+
+The Reddit and Twitter monitors can run simultaneously:
+
+```bash
+# Terminal 1: Reddit monitoring
+python3 -m src.main
+
+# Terminal 2: Twitter monitoring
+python3 -m src.twitter_main
+```
+
+Both systems use the same PostgreSQL database but separate tables, so they won't interfere with each other.

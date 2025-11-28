@@ -195,3 +195,132 @@ class Database:
         except psycopg2.Error as e:
             logger.error(f"Failed to get post count: {e}")
             return 0
+
+    # Twitter-specific methods
+    def create_twitter_tables(self):
+        """Create the twitter_tweets table if it doesn't exist."""
+        create_table_query = """
+        CREATE TABLE IF NOT EXISTS twitter_tweets (
+            tweet_id VARCHAR(20) PRIMARY KEY,
+            text TEXT NOT NULL,
+            author_id VARCHAR(20) NOT NULL,
+            author_username VARCHAR(50),
+            author_name VARCHAR(100),
+            author_verified BOOLEAN DEFAULT FALSE,
+            created_at VARCHAR(30),
+            created_utc BIGINT NOT NULL,
+            lang VARCHAR(10) DEFAULT 'und',
+            retweet_count INTEGER DEFAULT 0,
+            like_count INTEGER DEFAULT 0,
+            reply_count INTEGER DEFAULT 0,
+            quote_count INTEGER DEFAULT 0,
+            conversation_id VARCHAR(20),
+            in_reply_to_user_id VARCHAR(20),
+            hashtags TEXT,
+            referenced_tweets TEXT,
+            retrieved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(tweet_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_twitter_created_utc ON twitter_tweets(created_utc);
+        CREATE INDEX IF NOT EXISTS idx_twitter_retrieved_at ON twitter_tweets(retrieved_at);
+        CREATE INDEX IF NOT EXISTS idx_twitter_hashtags ON twitter_tweets(hashtags);
+        CREATE INDEX IF NOT EXISTS idx_twitter_author_username ON twitter_tweets(author_username);
+        """
+
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(create_table_query)
+                self.connection.commit()
+                logger.info("Twitter tables created successfully")
+                return True
+        except psycopg2.Error as e:
+            logger.error(f"Failed to create Twitter tables: {e}")
+            self.connection.rollback()
+            return False
+
+    def insert_tweet(self, tweet_data: Dict[str, Any]) -> bool:
+        """Insert a new tweet into the database."""
+        insert_query = """
+        INSERT INTO twitter_tweets
+        (tweet_id, text, author_id, author_username, author_name, author_verified,
+         created_at, created_utc, lang, retweet_count, like_count, reply_count, quote_count,
+         conversation_id, in_reply_to_user_id, hashtags, referenced_tweets)
+        VALUES (%(tweet_id)s, %(text)s, %(author_id)s, %(author_username)s, %(author_name)s, %(author_verified)s,
+                %(created_at)s, %(created_utc)s, %(lang)s, %(retweet_count)s, %(like_count)s, %(reply_count)s, %(quote_count)s,
+                %(conversation_id)s, %(in_reply_to_user_id)s, %(hashtags)s, %(referenced_tweets)s)
+        ON CONFLICT (tweet_id) DO NOTHING
+        """
+
+        # Enhanced debug logging
+        from datetime import datetime
+        tweet_time_readable = datetime.fromtimestamp(tweet_data['created_utc']).strftime('%Y-%m-%d %H:%M:%S UTC')
+        logger.info(f"🔍 DEBUG: Attempting to insert tweet {tweet_data['tweet_id']}")
+        logger.debug(f"🔍 DEBUG: Tweet details - created_utc: {tweet_data['created_utc']} ({tweet_time_readable}), "
+                    f"text: '{tweet_data['text'][:100]}...', author: @{tweet_data['author_username']}")
+
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(insert_query, tweet_data)
+                self.connection.commit()
+                if cursor.rowcount > 0:
+                    logger.info(f"✅ DEBUG: Successfully inserted new tweet: {tweet_data['tweet_id']}")
+                    return True
+                else:
+                    logger.info(f"⚠️ DEBUG: Tweet already exists in database: {tweet_data['tweet_id']}")
+                    return False
+        except psycopg2.Error as e:
+            logger.error(f"❌ Database error inserting tweet {tweet_data.get('tweet_id', 'unknown')}: {e}")
+            self.connection.rollback()
+            return False
+
+    def get_latest_tweet_id(self) -> Optional[str]:
+        """Get the tweet_id of the most recent tweet."""
+        query = "SELECT tweet_id FROM twitter_tweets ORDER BY created_utc DESC LIMIT 1"
+
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query)
+                result = cursor.fetchone()
+                latest_id = result['tweet_id'] if result else None
+
+                if latest_id:
+                    logger.info(f"🔍 DEBUG: Latest tweet ID in database: {latest_id}")
+                else:
+                    logger.info(f"🔍 DEBUG: No tweets found in database")
+
+                return latest_id
+        except psycopg2.Error as e:
+            logger.error(f"❌ Failed to get latest tweet ID: {e}")
+            return None
+
+    def get_tweet_count(self) -> int:
+        """Get total number of tweets in database."""
+        query = "SELECT COUNT(*) as count FROM twitter_tweets"
+
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query)
+                result = cursor.fetchone()
+                return result['count'] if result else 0
+        except psycopg2.Error as e:
+            logger.error(f"Failed to get tweet count: {e}")
+            return 0
+
+    def get_tweets_by_hashtag(self, hashtag: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get tweets containing a specific hashtag."""
+        query = """
+        SELECT * FROM twitter_tweets
+        WHERE hashtags LIKE %s
+        ORDER BY created_utc DESC
+        LIMIT %s
+        """
+
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query, (f'%{hashtag}%', limit))
+                results = cursor.fetchall()
+                return [dict(row) for row in results]
+        except psycopg2.Error as e:
+            logger.error(f"Failed to get tweets by hashtag {hashtag}: {e}")
+            return []
